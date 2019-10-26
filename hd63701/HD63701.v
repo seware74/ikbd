@@ -35,7 +35,8 @@ wire [7:0] PO4;
 // Multiplex PO3 and PO4 onto external AD port in mode 7
 assign AD = (PO2I[7:5] == 3'b111)?{ PO4, PO3 }:ADI;  
    
-// Built-In Instruction ROM TODO: include mode (POI[7:5]) here
+// Built-In Instruction ROM
+ TODO: include mode (POI[7:5]) here
 wire en_birom = (ADI[15:12]==4'b1111);			// $F000-$FFFF
 wire [7:0] biromd;
 MCU_BIROM irom( CLKx2, ADI[11:0], biromd );
@@ -128,7 +129,7 @@ module HD63701_BIRAM
 assign en_biram = (mcu_ad[15: 7]==9'b000000001);	// $0080-$00FF
 wire [6:0] biad = mcu_ad[6:0];
 
-reg [7:0] bimem[0:127];
+	reg [7:0] bimem[0:255];
 always @( posedge mcu_clx2 ) begin
 	if (en_biram & mcu_wr) bimem[biad] <= mcu_do;
 	else biramd <= bimem[biad];
