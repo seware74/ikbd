@@ -36,10 +36,10 @@ wire [7:0] PO4;
 assign AD = (PO2I[7:5] == 3'b111)?{ PO4, PO3 }:ADI;  
    
 // Built-In Instruction ROM
- TODO: include mode (POI[7:5]) here
-wire en_birom = (ADI[15:12]==4'b1111);			// $F000-$FFFF
-wire [7:0] biromd;
-MCU_BIROM irom( CLKx2, ADI[11:0], biromd );
+ //TODO: include mode (POI[7:5]) here
+//wire en_birom = (ADI[15:12]==4'b1111);			// $F000-$FFFF
+//wire [7:0] biromd;
+//MCU_BIROM irom( CLKx2, ADI[11:0], biromd );
 
 
 // Built-In WorkRAM
@@ -374,39 +374,49 @@ module HD63701_Timer
 	input 		 mcu_wr,
 	input  [7:0] mcu_do,
 
-	output		 mcu_irq2_tim,
+	//output		 mcu_irq2_tim,
+	output       mcu_irq3_tim,
 
 	output		 en_timer,
 	output [7:0] timerd
 );
 
-reg		  oci, oce;
-reg [15:0] ocr, icr;
-reg [16:0] frc;
-reg  [7:0] frt;
-reg  [7:0] rmc;
+reg		  oci1,oci2; //output compare interrupts
+reg [7:0]  tcr1, tcr2; //timer control registers
+reg [15:0] ocr1, icr; //output and input compare registers #1 
+reg [15:0] ocr2; //output compare register #2
+reg [16:0] frc; //free running counter low (all)
+reg  [7:0] frt; //free running counter high
+reg  [7:0] rmc; //ram control
+reg        tofi; //timer overflow interrupt
 
 always @( posedge mcu_clx2 or posedge mcu_rst ) begin
 	if (mcu_rst) begin
-		oce <= 0;
-		ocr <= 16'hFFFF;
-		icr <= 16'hFFFF;
+		tcr1 <= 0;
+		tcr2 <= 8'h10;//sw
+		ocr1 <= 16'hFFFF;
+		icr <= 16'h0000;
 		frc <= 0;
 		frt <= 0;
-		rmc <= 8'h40;
+		rmc <= 8'hF8; //sw
+		ocr2<= 16'hFFFF; //sw
 	end
-	else begin
+	else begin 
 		frc <= frc+1;
 		if (mcu_wr) begin
 			case (mcu_ad)
-				16'h08: oce <= mcu_do[3];
+
+                16'h08: tcr1 <= mcu_do[4:0]; 			
 				16'h09: frt <= mcu_do;
-				16'h0A: frc <= {frt,mcu_do,1'h0};
-				16'h0B: ocr[15:8] <= mcu_do;
-				16'h0C: ocr[ 7:0] <= mcu_do;
+				16'h0A: frc <= {frt,mcu_do,1'h0}; //why is this 17 bits
+				16'h0B: ocr1[15:8] <= mcu_do;
+				16'h0C: ocr1[ 7:0] <= mcu_do;
 				16'h0D: icr[15:8] <= mcu_do;
 				16'h0E: icr[ 7:0] <= mcu_do;
-				16'h14: rmc <= {mcu_do[7:6],6'h0};
+				16'h0F: tcr2 <= mcu_do[3:0];				
+				16'h14: rmc <= mcu_do;
+				16'h19: ocr2[15:8] <= mcu_do;
+				16'h1A: ocr2[ 7:0] <= mcu_do;
 				default:;
 			endcase
 		end
@@ -415,30 +425,61 @@ end
 
 always @( negedge mcu_clx2 or posedge mcu_rst ) begin
 	if (mcu_rst) begin
-		oci <= 1'b0;
+		oci1 <= 1'b0; //output compare interrupt
+		oci2 <= 1'b0; //output compare interrupt
+		tofi <= 1'b0; //timer overflow interrupt
 	end
 	else begin
+	
+	//the free running counter = 0000 and this is 
+	//not a reset; trigger the timer overflow flag
+	if(frc[16:1]==16'h0) tofi <= 1'b1; //timer overflow
+	
+	
 		case (mcu_ad)
-			16'h0B: oci <= 1'b0;
-			16'h0C: oci <= 1'b0;
-			default: if (frc[16:1]==ocr) oci <= 1'b1;
+		    16'h08: tofi <= 1'b0;
+			16'h0B: oci1 <= 1'b0;
+			16'h0C: oci1 <= 1'b0;
+			16'h19: oci2 <= 1'b0;
+			16'h1A: oci2 <= 1'b0;
+			default: 
+			     begin
+			         if (frc[16:1]==ocr1) oci1 <= 1'b1;
+			         if (frc[16:1]==ocr2) oci2 <= 1'b1;
+			     end
 		endcase
 	end
 end
 
-assign mcu_irq2_tim  = oci & oce;
+//assign mcu_irq2_tim  = oci1 & tcr1[3];
+assign mcu_irq3_tim  = (oci1 & tcr1[3]) | (oci2 & tcr2[3])  | (tofi & tcr1[2]);
 
-assign en_timer = ((mcu_ad>=16'h8)&(mcu_ad<=16'hE))|(mcu_ad==16'h14);
 
-assign   timerd = (mcu_ad==16'h08) ? {1'b0,oci,2'b10,oce,3'b000}:
+
+assign en_timer = 
+        ((mcu_ad>=16'h8)&(mcu_ad<=16'hF))|
+        (mcu_ad==16'h14) |
+        (mcu_ad==16'h19) |
+        (mcu_ad==16'h1A)
+        ;
+
+assign   timerd = (mcu_ad==16'h08) ? {1'b0,oci1,tofi,tcr1[4:0]}:
 		  (mcu_ad==16'h09) ? frc[16:9] :
 		  (mcu_ad==16'h0A) ? frc[ 8:1] :
-		  (mcu_ad==16'h0B) ? ocr[15:8] :
-		  (mcu_ad==16'h0C) ? ocr[ 7:0] :
+		  (mcu_ad==16'h0B) ? ocr1[15:8] :
+		  (mcu_ad==16'h0C) ? ocr1[ 7:0] :
 		  (mcu_ad==16'h0D) ? icr[15:8] :
 		  (mcu_ad==16'h0E) ? icr[ 7:0] :
+		  (mcu_ad==16'h0F) ? {1'b0,oci1,oci2,1'b0,tcr2[3:0]}:		  
 		  (mcu_ad==16'h14) ? rmc :
-		  8'h0;
+          (mcu_ad==16'h19) ? ocr2[15:8] :
+          (mcu_ad==16'h1A) ? ocr1[ 7:0] :
+           8'h0	  
+		  ;
+		  
+		  
+		  
+		  
 
 endmodule
 
